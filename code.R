@@ -1,29 +1,24 @@
 # load data and packages
-load("data.rda")
+
+# d <- read.csv(curl("https://raw.githubusercontent.com/rene-hiroki/house_price/master/raw_data.csv"))
+
 library(dplyr)
 library(ggplot2)
 library(caret)
-
-# distinct raw data to wrangled data
+library(curl)
+load("data.rda")
 d <- data.rda
-
+d %>% ggplot(aes(date,log(price), group = date)) + geom_boxplot()
 
 # EDA ---------------------------------------------------------------------
 
-# glance at the dataset structure
+# glimpse the dataset 
 glimpse(d)
 
-# remove the columns don't use (date, street, country)
-d <- d %>% select(price, bedrooms, bathrooms, sqft_living, sqft_lot, floors,
-                  waterfront, view, condition, sqft_above, sqft_basement,
-                  yr_built, yr_renovated, city, statezip)
-
-d %>% select(price, bedrooms, bathrooms, sqft_living, sqft_lot, floors,
-             waterfront, view, condition, sqft_above, sqft_basement,
-             yr_built, yr_renovated) %>% 
-    boxplot(horizontal = TRUE)
 # histogram of price
-d %>% ggplot(aes(price)) + geom_histogram()
+
+plot(d$price)
+d %>% ggplot(aes(log(price))) + geom_histogram()
 
 # boxplot
 boxplot(log(d$price))
@@ -63,6 +58,7 @@ set.seed(1)
 test_index <- createDataPartition(y = d$price, times = 1, p = 0.1, list = FALSE)
 train_set <- d %>% slice(-test_index)
 test_set <- d %>% slice(test_index)
+
 
 # log transform to price, sqft_living, sqft_above
 train_set <- train_set %>% mutate(price = log(price))
@@ -126,7 +122,7 @@ test_set <- test_set %>%
     mutate(floors = ifelse(floors == 1, 0, 1)) # floor 1(0) or more(1)
 
 # predict the price
-predicted_prices <- predict(fit_4, test_set)
+predicted_prices <- predict(fit_2, test_set)
 linear_model <- predicted_prices
 # take off log transformation
 
@@ -136,3 +132,10 @@ plot(predicted_prices, test_set$price)
 histogram(exp(predicted_prices))
 histogram(exp(test_set$price))
 
+
+RMSE(predicted_prices, test_set$price)
+plot(predicted_prices, test_set$price)
+histogram(predicted_prices)
+histogram(test_set$price)
+
+d %>% select(sqft_living) %>% arrange(desc(sqft_living)) %>% head

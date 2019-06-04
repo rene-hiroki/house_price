@@ -12,7 +12,7 @@ RMSE <- function(predicted_prices, true_prices){
 
 # distinct raw data to wrangled data
 d <- data.rda
-
+?randomForest
 
 
 # EDA ---------------------------------------------------------------------
@@ -54,7 +54,7 @@ train_set <- train_set %>%
 
 # select features
 train_set <- train_set %>% select(price, bedrooms, bathrooms, sqft_living,
-                                  sqft_above, floors, city)
+                                  sqft_above, city)
 
 # preprocessing for test set
 # log transform to price, sqft_living, sqft_above
@@ -83,5 +83,12 @@ plot(predicted_prices, test_set$price)
 histogram(exp(predicted_prices))
 histogram(exp(test_set$price))
 
-varImpPlot(fit_rf)
 
+RMSE(predicted_prices, test_set$price)
+plot(predicted_prices, test_set$price)
+histogram(predicted_prices)
+histogram(test_set$price)
+
+
+varImpPlot(fit_rf)
+fit_rf$importance
