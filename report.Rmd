@@ -1,0 +1,317 @@
+---
+title: "House Price Prediction"
+author: "rene_hiroki"
+date: "`r format(Sys.time(), '%Y/%m/%d')`"
+output: pdf_document
+---
+    
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(digits = 4)
+library(curl)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+load("data.rda")
+d <- data.rda
+# comment out if you download data from github directly
+# d <- read.csv(curl("https://raw.githubusercontent.com/rene-hiroki/house_price/master/raw_data.csv"))
+```
+
+# Contents
+
+1. Introduction
+2. Exploratory Data Analysis
+3. Analysis
+4. Results
+5. Conclusion
+
+
+# 1. Introduction
+
+In this report, we will build a couple of machine learning models to predict house price. We use the dataset that is provided by Shree from Kaggle Datasets(<https://www.kaggle.com/shree1992/housedata>). You can download the dataset from this link, or you can also download from [*here*](https://github.com/rene-hiroki/house_price) GitHub repository. Let's glance at the dataset structure:   
+```{r glimpse dataset, echo=FALSE}
+glimpse(d)
+```
+
+We can see how many observations and variables are in the dataset, and also see what data types they are. Again, we are going to build machine learning models to predict price with other variables.
+
+Our goal of this project is just predict house price with machine learning method. To evaluate our models, we define a loss function with RMSE. Thus, we should minimize RMSE as possible as we can.
+
+Before moving on Analysis section, Exploratory Data Analysis(EDA) is coming next section. The more we understanding data, the more good models we can build. Because this task is regression, we try to build models with "multiple linear regression" and "random forests" in Analysis section. Then, We will evaluate our models in Result section and choose the best model in Conclusion section. 
+
+\clearpage
+
+
+# 2. Exploratory Data Analysis
+
+## 2.1 Response Variable
+
+Our response variable is price. Let's look at distribution of price.  
+
+```{r plot price, echo=FALSE,fig.height=3,fig.width=3}
+plot(d$price, main = "Plot of price")
+```
+```{r hist price, echo=FALSE,fig.height=3,fig.width=3}
+hist(d$price)
+```
+
+That's tough to see. Log transformation might help us.  
+
+```{r log transformed price histogram, warning=FALSE,echo=FALSE,fig.height=4.5,fig.width=7}
+d %>% ggplot(aes(log(price))) + 
+    geom_histogram(bins = 40, color = I("black")) +
+    labs(title = "Histogram of log(price)")
+```
+
+That looks like a normal distribution. Thus, price might follow a log-normal distribution.
+\clearpage
+
+Then, let's see the top 5 and worst 5 prices.
+```{r top 5 and worst 5 price,echo=FALSE}
+top5_price <- d %>% arrange(desc(price)) %>%
+    head(5) %>% 
+    pull(price)
+worst5_price <- d %>% arrange(desc(price)) %>% 
+    tail(5) %>% 
+    pull(price) 
+tibble(top5 = top5_price, worst5 = worst5_price) %>% knitr::kable()
+```
+
+We can see 0s in worst 5 prices. Let's see the rows that price = 0.
+
+```{r glimpse data that price is 0, echo=FALSE}
+d %>% filter(price == 0) %>% glimpse()
+```
+
+We can quickly know that there are 49 rows that price = 0, and these observations are not wrong. To improve our regression models, we replace these price 0 by median price `r as.integer(median(d$price))`. Now, top 5 and worst 5 prices looks like this.
+
+```{r alter the price 0 to median price, include=FALSE}
+med_price <- median(d$price)
+ind <- d$price == 0
+d$price[ind] <- med_price 
+```
+
+
+```{r recheck top 5 and worst 5 price,echo=FALSE}
+top5_price <- d %>% arrange(desc(price)) %>%
+    head(5) %>% 
+    pull(price)
+worst5_price <- d %>% arrange(desc(price)) %>% 
+    tail(5) %>% 
+    pull(price) 
+tibble(top5 = top5_price, worst5 = worst5_price) %>% knitr::kable()
+```
+
+\clearpage
+
+## 2.2 Predictor Variables
+
+Before going forward EDA processes, we need to separate the dataset to trainset and testset. In this analysis, it is used that 90% of the dataset for the trainset and rest of dataset 10% is used for the testset.
+
+```{r create trainset and testset, include=FALSE}
+set.seed(1)
+test_index <- createDataPartition(y = d$price, times = 1, p = 0.1, list = FALSE)
+train_set <- d %>% slice(-test_index)
+test_set <- d %>% slice(test_index)
+
+```
+
+Then, we analyze relationships between response variable and predictor variables. 
+
+```{r some predictors vs price, fig.height=3.5, fig.width=3.5, cache=TRUE, echo=FALSE}
+train_set %>% ggplot(aes(x = bedrooms,         y = log(price), group = bedrooms))  + geom_boxplot() + labs(title = "Price vs Bedrooms")
+train_set %>% ggplot(aes(x = bathrooms,        y = log(price), group = bathrooms)) + geom_boxplot() + labs(title = "Price vs Bathrooms")
+train_set %>% ggplot(aes(x = log(sqft_living), y = log(price))) + geom_point() + geom_smooth(method = "lm") + labs(title = "Price vs Sqft_living")
+train_set %>% ggplot(aes(x = log(sqft_above),  y = log(price))) + geom_point() + geom_smooth(method = "lm") + labs(title = "Price vs Sqft_above")
+```
+
+```{r city vs price, fig.height=5.5, fig.width=7.5,echo=FALSE,cache=TRUE}
+train_set %>% ggplot(aes(x = city, y = log(price), group = city)) + geom_boxplot() + coord_flip() + labs(title = "City vs Price", x ="")
+```
+
+```{r predictors vs price we do not use, fig.height=3.5, fig.width=3.5, echo=FALSE, cache=TRUE}
+train_set %>% ggplot(aes(x = log(sqft_lot),   y = log(price))) + geom_point() + labs(title = "Price vs Sqft_lot")
+train_set %>% ggplot(aes(x = floors,     y = log(price), group = floors)) + geom_boxplot() + labs(title = "Price vs Floors")
+train_set %>% ggplot(aes(x = waterfront, y = log(price), group = waterfront)) + geom_boxplot() + labs(title = "Price vs Waterfront")
+train_set %>% ggplot(aes(x = view,       y = log(price), group = view)) + geom_boxplot() + labs(title = "Price vs View")
+train_set %>% ggplot(aes(x = condition,  y = log(price), group = condition)) + geom_boxplot() + labs(title = "Price vs Condition")
+train_set %>% ggplot(aes(x = log(sqft_basement), y = log(price))) + geom_point() + labs(title = "Price vs Sqft_basement")
+train_set %>% ggplot(aes(x = yr_built,   y = log(price), group = yr_built)) + geom_boxplot() + labs(title = "Price vs year_built") 
+train_set %>% filter(yr_renovated != 0) %>% 
+    ggplot(aes(x = yr_renovated, y = log(price), group = yr_renovated)) + geom_boxplot() + labs(title = "Price vs year_renovated")
+
+```
+
+
+```{r data vs price, fig.height=6, fig.width=7.5,echo=FALSE,cache=TRUE}
+train_set %>% ggplot(aes(x = date,     y = log(price), group = date)) + geom_boxplot() + coord_flip() + labs(title = "Date vs Price")
+```
+
+```{r statezip vs price, fig.height=9, fig.width=7.5,echo=FALSE,cache=TRUE}
+train_set %>% ggplot(aes(x = statezip, y = log(price), group = statezip)) + geom_boxplot() + coord_flip() + labs(title = "Statezip vs Price")
+```
+
+From these graphs, we decide to use only 5 predictor variables, **bedrooms**, **bathrooms**, **sqft_living**, **sqft_above**, and **city**. These predictor variables might be able to predict price. On the other hand, rest of predictor variables looks like uncorrelated with price. (We can't use statezip for predictor variables because there too many categories.)
+
+```{r select features, include=FALSE}
+train_set <- train_set %>% select(price, bedrooms, bathrooms, sqft_living, sqft_above, city)
+```
+
+\clearpage
+
+# 3. Analysis
+
+
+## 3.1. Define loss function by RMSE
+
+We use Root Mean Squared Error (RMSE) as a loss function. We define $y_i$ as the price and denote our prediction with $\hat{y}_i$. The RMSE is then defined as:
+$$
+RMSE = \sqrt{ \frac{1}{N} \sum_i (\hat{y}_i - y_i)^2 }
+$$
+
+```{r define loss function, include=FALSE}
+RMSE <- function(predicted_prices, true_prices){
+    sqrt(mean((predicted_prices - true_prices)^2))
+}
+```
+
+## 3.2. Multiple Linear Regression
+
+We can build multiple linear regression model with all predictor variables except city, because city is a categorical variable. If there are correlation among the predictor variables, it is inevitable to be a multicollinearity. We want to avoid this. Before building a model, let' look at correlation.
+
+```{r correlation in trainset, echo=FALSE}
+cor(train_set[1:5])
+```
+
+You can see that some variables are correlated. This implies that we have to pay attention to multicolliniearity. And it's important step to do log transformation to price, sqft_living, and sqft_above. This transformation makes residuals distribution normal.
+
+```{r log transform to price and predictor variables, include=FALSE}
+train_set <- train_set %>% mutate(price = log(price))
+train_set <- train_set %>% mutate(sqft_living = log(sqft_living))
+train_set <- train_set %>% mutate(sqft_above = log(sqft_above))
+test_set  <- test_set  %>% mutate(price = log(price))
+test_set  <- test_set  %>% mutate(sqft_living = log(sqft_living))
+test_set  <- test_set  %>% mutate(sqft_above = log(sqft_above))
+```
+
+Finally, we can build several multiple linear models. These equations are represent our models:
+
+model1: $log({Y}_{price}) = \alpha + \beta_{living}log(x_1) + \epsilon$  
+model2: $log({Y}_{price}) = \alpha + \beta_{living}log(x_1) + \beta_{bath} x_2 + \epsilon$  
+model3: $log({Y}_{price}) = \alpha + \beta_{living}log(x_1) + \beta_{bed} x_2 + \epsilon$  
+model4: $log({Y}_{price}) = \alpha + \beta_{living}log(x_1) + \beta_{above}log(x_2) + \beta_{bath}x_3 + \epsilon$   
+
+```{r build linear model, include=FALSE}
+fit_1 <- train_set %>% lm(price ~ sqft_living, data =.)
+fit_2 <- train_set %>% lm(price ~ sqft_living + bathrooms, data =.)
+fit_3 <- train_set %>% lm(price ~ sqft_living + bedrooms, data =.)
+fit_4 <- train_set %>% lm(price ~ sqft_living + sqft_above + bathrooms, data =.)
+```
+
+Now we fit the model and then look the coefficients:  
+
+```{r look coefficients, echo=FALSE}
+fit_1$coefficients
+fit_2$coefficients
+fit_3$coefficients
+fit_4$coefficients
+```
+
+In model3, coefficient bedrooms is negative and also in model4 coefficient sqft_above is negative. These are opposite to our intuition. That is caused by multicollinearity so we don't use model3 and model4. 
+Let's look at density plot for model1, model2, and testset and then we evaluate model_1 and model2 by RMSE with testset.
+
+```{r predict the price, include=FALSE}
+model_1_prices <- predict(fit_1, test_set)
+model_2_prices <- predict(fit_2, test_set)
+```
+ 
+```{r density plot, echo = FALSE, fig.height=4}
+m1 = tibble(price = exp(model_1_prices), model = "model1")
+m2 = tibble(price = exp(model_2_prices), model = "model2")
+tp = tibble(price = exp(test_set$price), model = "test")
+models_tibble <- bind_rows(m1,m2,tp)
+
+models_tibble %>% ggplot(aes(price, color = model, fill = model)) +
+    geom_density(alpha = 0.3, aes(y = ..scaled..)) +
+    scale_x_continuous(labels = scales::dollar, breaks = seq(0,3000000,500000)) +
+    labs(y = "", title = "Density plot for model1, model2 and test prices",
+         color = "", fill = "") 
+```
+
+```{r calculate RMSE, include=FALSE}
+m1_rmse <- RMSE(exp(model_1_prices), exp(test_set$price))
+m2_rmse <- RMSE(exp(model_2_prices), exp(test_set$price))
+m1_rmse
+m2_rmse
+```
+
+### model1: RMSE = `r as.integer(m1_rmse)`  
+### model2: RMSE = `r as.integer(m2_rmse)`  
+
+Although model1 and model2 are very close, model2 is slightly better than model1.
+
+
+## 3.3. Random forests
+
+We already to ready for building another model by random forests. We use predictor variables **bedrooms**, **bathrooms**, **sqft_living**, **sqft_above**, and **city**. The difference to the linear model is that city, categorical variable, is included in predictor variables. In section2 EDA, we saw that city has various median prices. This means that city is very useful to predict. Let's build a random forests model.
+
+```{r recreate the trainset and testset, include=FALSE}
+# because the dataset we used are log transformed, random forests doesn't need it. 
+set.seed(1)
+test_index <- createDataPartition(y = d$price, times = 1, p = 0.1, list = FALSE)
+train_set <- d %>% slice(-test_index)
+test_set <- d %>% slice(test_index)
+```
+
+```{r build rf_model, include=FALSE}
+# select features
+train_set <- train_set %>% select(price, bedrooms, bathrooms, sqft_living, sqft_above, city)
+# find best tuning parameter mtry
+tuneRF(train_set[,-1], train_set[,1], doBest = TRUE)
+# fit random forests
+fit_rf <- randomForest(price ~ ., data = train_set, mtry = 1)
+rf_model_prices <- predict(fit_rf, test_set)
+```
+
+
+```{r plot rf model varimp, echo=FALSE, fig.height=3, fig.width=6}
+varImpPlot(fit_rf, main = "Variable importance plot")
+```
+
+```{r density plot rf_model, echo = FALSE, fig.height=4}
+rf = tibble(price = rf_model_prices, model = "rf_model")
+tp = tibble(price = test_set$price , model = "test")
+models_tibble <- bind_rows(rf,tp)
+
+models_tibble %>% ggplot(aes(price, color = model, fill = model)) +
+    geom_density(alpha = 0.3, aes(y = ..scaled..)) +
+    scale_x_continuous(labels = scales::dollar, breaks = seq(0,3000000,500000)) +
+    labs(y = "", title = "Density plot for random forests model and test prices",
+         color = "", fill = "") 
+```
+
+```{r calculate RMSE for rf model, include=FALSE}
+rf_rmse <- RMSE(rf_model_prices, test_set$price)
+rf_rmse
+```
+
+### rf_model: RMSE = `r as.integer(rf_rmse)`
+
+From variable importance plot, as we expected that city contributed to predict price. Density plot looks more better than linear models, and RMSE is minimized. 
+
+\clearpage  
+# 4. Results
+
+```{r result table, echo=FALSE}
+tibble(model = c("linear model1", "linear model2", "random forests model"),
+       RMSE = c(m1_rmse, m2_rmse, rf_rmse)) %>% 
+    knitr::kable()
+```
+
+We built three models with multiple linear regression and random forests. The best model is random forests model with RMSE = `r as.integer(rf_rmse)`.
+
+# 5. Conclusion
+
+We can predict house price with random forests model with average error about $200,000. Sqft_living has the largest effect on house price. That is follow our intuition. And city has also some effect on price. This is why random forests model is better than linear model. Linear model can't use categorical variables(not 0 or 1). Random forests is so useful.
